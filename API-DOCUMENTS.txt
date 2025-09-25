@@ -150,3 +150,9 @@ POSTMAN COLLETION:
 
 https://aquinomarvinenric-9997172.postman.co/workspace/marvin-enric-aquino's-Workspace~97a03369-efd3-4082-8f23-5e8146595313/collection/48785779-12caf8e4-20fd-4c72-a536-1ebe68a798c2?action=share&creator=48785779
 
+
+GITHUB LINKS:
+
+https://github.com/marvinenric18/authmodule/tree/master
+
+https://github.com/marvinenric18/parking-management/tree/master
