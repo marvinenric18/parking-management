@@ -1,0 +1,6 @@
+package Data;
+
+public class GetAllVehicleParkedModel {
+
+	//USE FOR PAGINATION 
+}

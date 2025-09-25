@@ -1,0 +1,103 @@
+package API;
+
+import java.sql.*;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+public class ParkingScheduler {
+
+	  private final String dbUrl;
+	    private final String dbUser;
+	    private final String dbPass;
+
+	    public ParkingScheduler(String dbUrl, String dbUser, String dbPass) {
+	        this.dbUrl = dbUrl;
+	        this.dbUser = dbUser;
+	        this.dbPass = dbPass;
+	    }
+
+	    public void start() {
+	        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+
+	        // Run every 1 minute
+	        scheduler.scheduleAtFixedRate(this::removeExpiredVehicles, 0, 1, TimeUnit.MINUTES);
+	    }
+
+	    private void removeExpiredVehicles() {
+	        try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+	        		Statement st = conn.createStatement()) {
+
+	        	
+		    	st.execute("CREATE TABLE IF NOT EXISTS parking_lots (" +
+		    	           "id INT AUTO_INCREMENT PRIMARY KEY, " +
+		    	           "lot_id VARCHAR(50) UNIQUE NOT NULL, " +
+		    	           "location VARCHAR(100) NOT NULL, " +
+		    	           "capacity INT NOT NULL, " +
+		    	           "occupied_spaces INT NOT NULL, " +
+		    	           "cost_per_minute DECIMAL(10,2) NOT NULL" +
+		    	           ")");
+		    	
+	               st.execute("CREATE TABLE IF NOT EXISTS parking_vehicle_lists (" +
+	                       "id INT AUTO_INCREMENT PRIMARY KEY, " +
+	                       "owner_name VARCHAR(150) NOT NULL CHECK (owner_name REGEXP '^[A-Za-z ]+$'), " +
+	                       "type VARCHAR(20) NOT NULL CHECK (type IN ('CAR', 'MOTORCYCLE', 'TRUCK')), " +
+	                       "license_plate VARCHAR(100) NOT NULL UNIQUE, " +
+	                       "parking_lot_id VARCHAR(50) NOT NULL, " +
+	                       "entry_datetime TIMESTAMP NOT NULL, " +
+	                       "exit_datetime TIMESTAMP, " + 
+	                       "total_cost DECIMAL(12,2)," +
+	                       "FOREIGN KEY (parking_lot_id) REFERENCES parking_lots(lot_id)" +
+	                       ")");
+	               
+	            // Find vehicles parked more than 15 minutes
+	            String selectSQL = "SELECT license_plate, parking_lot_id, entry_datetime FROM parking_vehicle_lists " +
+	                               "WHERE exit_datetime IS NULL";
+
+	            try (PreparedStatement ps = conn.prepareStatement(selectSQL);
+	                 ResultSet rs = ps.executeQuery()) {
+
+	                while (rs.next()) {
+	                    String licensePlate = rs.getString("license_plate");
+	                    String lotId = rs.getString("parking_lot_id");
+	                    Timestamp entryTime = rs.getTimestamp("entry_datetime");
+
+	                    long minutesParked = Duration.between(entryTime.toInstant(), Instant.now()).toMinutes();
+
+	                    if (minutesParked > 15) {
+	                        //Remove vehicle from parking_vehicle_lists (simulate checkout)
+	                        checkoutVehicle(conn, licensePlate, lotId);
+	                    }
+	                }
+	            }
+
+	        } catch (SQLException e) {
+	            e.printStackTrace();
+	        }
+	    }
+
+	    // Checkout helper method (similar to manual checkout)
+	    private void checkoutVehicle(Connection conn, String licensePlate, String lotId) throws SQLException {
+	        // Set exit_datetime
+	    	
+	    	
+	        String updateVehicle = "UPDATE parking_vehicle_lists SET exit_datetime = CURRENT_TIMESTAMP, total_cost = 0 " +
+	                               "WHERE license_plate = ?";
+	        try (PreparedStatement ps = conn.prepareStatement(updateVehicle)) {
+	            ps.setString(1, licensePlate);
+	            ps.executeUpdate();
+	        }
+
+	        // Decrement occupied spaces
+	        String updateLot = "UPDATE parking_lots SET occupied_spaces = occupied_spaces - 1 WHERE lot_id = ? AND occupied_spaces > 0";
+	        try (PreparedStatement ps = conn.prepareStatement(updateLot)) {
+	            ps.setString(1, lotId);
+	            ps.executeUpdate();
+	        }
+
+	        System.out.println("Auto-removed vehicle: " + licensePlate + " from lot: " + lotId);
+	    }
+	
+}

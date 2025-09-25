@@ -1,0 +1,750 @@
+package API;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.Status;
+
+//FOR LOGGER..
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.json.simple.JSONObject;
+
+import Config.Config;
+import Data.CheckOutVehicleModel;
+import Data.GetAllVehicleParkedModel;
+import Data.GetParkingDetailsModel;
+import Data.ParkingLotModel;
+import Data.VehicleModel;
+
+@Path("v1")
+public class APIService {
+
+	public static Logger logger = null;
+	public static String db_url =  "";
+	public static String db_user = "";
+	public static String db_pass = "";
+	
+	public JSONObject result = null;
+	public JSONObject data = null;
+	public ArrayList<JSONObject> result_data = null;
+	public Integer offset = 0;
+    private static final String LICENSE_PLATE_REGEX = "^[A-Za-z0-9-]+$";
+    
+    private static final String NAME_REGEX = "^[A-Za-z ]+$";
+    private static final Pattern NAME_PATTERN = Pattern.compile(NAME_REGEX);
+    
+	@GET
+	@Path("testlink")
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response testLink() {
+		
+		return Response.status(200).entity("test").build();
+	}
+	
+	
+	//FOR REGISTRATION OF LOT 
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("lot-registration")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response createLot(ParkingLotModel lot) {
+	    logger = LogManager.getLogger(APIService.class);
+	    
+	    logger.info("REGISTRATION OF LOT..");
+	    
+	    result = new JSONObject();
+	    
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+
+	    try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+	         Statement st = conn.createStatement()) {
+
+	    	
+	    	st.execute("CREATE TABLE IF NOT EXISTS parking_lots (" +
+	    	           "id INT AUTO_INCREMENT PRIMARY KEY, " +
+	    	           "lot_id VARCHAR(50) UNIQUE NOT NULL, " +
+	    	           "location VARCHAR(100) NOT NULL, " +
+	    	           "capacity INT NOT NULL, " +
+	    	           "occupied_spaces INT NOT NULL, " +
+	    	           "cost_per_minute DECIMAL(10,2) NOT NULL" +
+	    	           ")");
+
+	    	
+	    	
+	    	
+	    	// 2. Insert lot using PreparedStatement
+	    	String insertLotSQL = "INSERT INTO parking_lots (lot_id, location, capacity, occupied_spaces, cost_per_minute) " +
+	    	                      "VALUES (?, ?, ?, ?, ?)";
+
+	    	try (PreparedStatement ps = conn.prepareStatement(insertLotSQL)) {
+	    	    ps.setString(1, lot.lot_id);
+	    	    ps.setString(2, lot.location);
+	    	    ps.setInt(3, lot.capacity);
+	    	    ps.setInt(4, lot.occupied_spaces);
+	    	    ps.setDouble(5, lot.cost_per_minute); // assuming cost_per_minute is BigDecimal
+	    	    ps.executeUpdate();
+	    	}
+	    	
+	    	
+	    	
+	        logger.info("Parking lot created: " + lot.lot_id);
+
+	        // Return created response
+	        result.put("status","success");
+	        result.put("message","successfully_added");
+	        
+	        return Response.status(Response.Status.CREATED).entity(result).build();
+
+	    } catch (SQLException e) {
+	        logger.error("Error creating parking lot", e);
+	        
+	       	result.put("message",e.getMessage());
+        	result.put("status","failed");
+	       	
+			logger.info("RESPONSE: " + result);
+			return Response.status(Status.OK).entity(result).build();
+			
+	 
+	    } catch (Exception e) {
+	        logger.error("Unexpected error", e);
+	     	result.put("message","invalid_request");
+        	result.put("status","failed");
+	       	
+			logger.info("RESPONSE: " + result);
+			return Response.status(Status.OK).entity(result).build();
+	    }
+	}
+    
+	
+	//FOR REGISTRATION OF VEHICLE AND ALSO CHECKING IN
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("check-in-vehicle-registration")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response checkInVehicle(VehicleModel vehicle) throws SQLException {
+	    logger = LogManager.getLogger(APIService.class);
+	 
+	    logger.info("LICENSE_PLATE:{},TYPE:{},OWNER_NAME:{}", vehicle.license_plate, vehicle.type, vehicle.owner_name);
+	    
+	    result = new JSONObject();
+	     
+	    if(!checkPlate(vehicle.license_plate))
+	    {
+	    	logger.info("invalid_license_plate!");
+	    	
+	    	result.put("message","invalid_license_plate");
+	    	result.put("status","failed");
+	    	
+	    	logger.info("RESPONSE: " + result);
+			return Response.status(Status.BAD_REQUEST).entity(result).build();
+	    }
+	    
+	    //CHECKING IF THE VEHICLE TYPE IS ALLOWED OR NOT
+	    String type = vehicle.type.trim().toUpperCase();  
+	    if (!type.equals("CAR") && !type.equals("MOTORCYCLE") && !type.equals("TRUCK")) 
+	    {
+
+	    	    logger.info("invalid_type!");
+
+	    	    result.put("message", "invalid_type");
+	    	    result.put("status", "failed");
+
+	    	    return Response.status(Status.BAD_REQUEST).entity(result).build();
+	    }
+	    
+	    if (!isValidName(vehicle.owner_name)) {
+            logger.info("INVALID_NAME");
+            result.put("message", "invalid_owner_name");
+    	    result.put("status", "failed");
+
+    	    return Response.status(Status.BAD_REQUEST).entity(result).build();
+    	    
+            
+        } 
+	    
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+
+        try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+                Statement st = conn.createStatement()) {
+
+
+               // Create parking_vehicle_lists table
+               st.execute("CREATE TABLE IF NOT EXISTS parking_vehicle_lists (" +
+                       "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                       "owner_name VARCHAR(150) NOT NULL CHECK (owner_name REGEXP '^[A-Za-z ]+$'), " +
+                       "type VARCHAR(20) NOT NULL CHECK (type IN ('CAR', 'MOTORCYCLE', 'TRUCK')), " +
+                       "license_plate VARCHAR(100) NOT NULL UNIQUE, " +
+                       "parking_lot_id VARCHAR(50) NOT NULL, " +
+                       "entry_datetime TIMESTAMP NOT NULL, " +
+                       "exit_datetime TIMESTAMP, " + 
+                       "total_cost DECIMAL(12,2)," +
+                       "FOREIGN KEY (parking_lot_id) REFERENCES parking_lots(lot_id)" +
+                       ")");
+
+               //check if there are available in parking_lot or parking lot is exist..
+               String checkLotSQL = "SELECT occupied_spaces, capacity FROM parking_lots WHERE lot_id = ?";
+               try (PreparedStatement ps = conn.prepareStatement(checkLotSQL)) {
+                   ps.setString(1, vehicle.parking_lot_id);
+                   try (ResultSet rs = ps.executeQuery()) {
+                       if (rs.next()) 
+                       {
+                           int occupied = rs.getInt("occupied_spaces");
+                           int capacity = rs.getInt("capacity");
+                           if (occupied >= capacity) 
+                           {
+                               System.out.println("Parking lot is full: " + vehicle.parking_lot_id);
+                               
+                               result.put("status","success");
+                               result.put("message","parking_lot_is_full");
+                   	    
+                               return Response.status(Status.OK).entity(result).build();
+                           }
+                       } 
+                       else 
+                       {
+                           System.out.println("Parking lot does not exist: " + vehicle.parking_lot_id);
+                        
+                           result.put("status","success");
+               	           result.put("message","parking_lot_does_not_exist");
+               	    
+               	           return Response.status(Status.OK).entity(result).build();
+                       }
+                   }
+               }
+               
+               
+               String checkPLotSQL = "SELECT capacity, occupied_spaces FROM parking_lots WHERE lot_id = ?";
+               try (PreparedStatement ps = conn.prepareStatement(checkPLotSQL)) {
+                   ps.setString(1, vehicle.parking_lot_id);
+                   try (ResultSet rs = ps.executeQuery()) {
+                       if (rs.next()) {
+                           int capacity = rs.getInt("capacity");
+                           int occupied = rs.getInt("occupied_spaces");
+
+                           if (occupied >= capacity) 
+                           {
+                               logger.info("Parking lot is full: " + vehicle.parking_lot_id); 
+                               
+                               result.put("status","success");
+                               result.put("message","parking_lot_is_full");
+                               return Response.status(Status.OK).entity(result).build();
+           						
+                           }
+                       } 
+                       else 
+                       {
+                    	   logger.info("Parking lot does not exist: " + vehicle.parking_lot_id);
+                           result.put("status","success");
+                           result.put("message","parking_lot_does_not_exist");
+       				    
+       					return Response.status(Status.OK).entity(result).build();
+                       }
+                   }
+               }
+				
+               
+               // Insert sample vehicle
+               String insertVehicleSQL = "INSERT INTO parking_vehicle_lists " +
+                       "(owner_name, type, license_plate, parking_lot_id, entry_datetime, exit_datetime, total_cost) " +
+                       "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, NULL,NULL)";
+
+               try (PreparedStatement ps = conn.prepareStatement(insertVehicleSQL)) {
+                   ps.setString(1, vehicle.owner_name);
+                   ps.setString(2, type);
+                   ps.setString(3, vehicle.license_plate);
+                   ps.setString(4, vehicle.parking_lot_id);
+                   ps.executeUpdate();
+               }
+
+               //THEN UPDATE PARKING LOT TO DECREMENT NUMBER OF SPACES
+             String updateLotSQL = "UPDATE parking_lots SET occupied_spaces = occupied_spaces + 1 " +
+                   "WHERE lot_id = ? AND occupied_spaces < capacity";
+
+			 try (PreparedStatement ps = conn.prepareStatement(updateLotSQL)) 
+			 {
+			     ps.setString(1, vehicle.parking_lot_id);
+			     int rowsUpdated = ps.executeUpdate();
+			     if (rowsUpdated > 0) 
+			     {
+			         logger.info("Occupied spaces incremented for lot: " + vehicle.parking_lot_id);
+			         
+			         // Return created response
+				        result.put("status","success");
+				        result.put("message","successfully_added");
+				    
+					return Response.status(Status.OK).entity(result).build();
+					
+			     } 
+			     else 
+			     {
+			        logger.info("Parking lot is full or invalid lot_id: " + vehicle.parking_lot_id);
+			         
+			         // Return created response
+			        result.put("status","success");
+			        result.put("message","parking_lot_is_full");
+				    
+					return Response.status(Status.OK).entity(result).build();
+					
+			     }
+			 }
+	     }
+		 catch (SQLException e) 
+         {
+		    logger.error("Database error: " + e.getMessage());
+		    e.printStackTrace();
+		    
+		    result.put("status","failed");
+	        result.put("message","database_error");
+		    
+			return Response.status(Status.BAD_GATEWAY).entity(result).build();
+		    
+		 } 
+         catch (Exception e) 
+         {
+		    logger.error("Unexpected error: " + e.getMessage());
+		    e.printStackTrace();
+		    
+		    result.put("status","failed");
+	        result.put("message","database_error");
+		    
+			return Response.status(Status.BAD_GATEWAY).entity(result).build();
+ 		 }
+
+	       
+	}
+	
+
+	//FOR CHECKING OUT
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("check-out-vehicle")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response checkOutVehicle(CheckOutVehicleModel checkoutvehicle) throws SQLException {
+		
+	    logger = LogManager.getLogger(APIService.class);
+		 
+	    logger.info("PARKING_LOT_ID:{},LICENSE_PLATE:{}", checkoutvehicle.parking_lot_id, checkoutvehicle.license_plate );
+	   
+	    result = new JSONObject();
+	    
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+
+	    double totalCost;
+        try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+                Statement st = conn.createStatement()) 
+        {
+        	
+        
+		    // 1. Retrieve vehicle info
+		    String selectVehicleSQL = "SELECT a.parking_lot_id, a.entry_datetime, b.cost_per_minute FROM parking_vehicle_lists a " +
+		    						  "LEFT JOIN parking_lots b ON b.lot_id = a.parking_lot_id " +
+		                              "WHERE license_plate = ? AND parking_lot_id = ? AND exit_datetime IS NULL";
+		    String parkingLotId = null;
+		    Timestamp entryTime = null;
+		    double costPerMinute = 0;
+		    
+		    try (PreparedStatement ps = conn.prepareStatement(selectVehicleSQL)) 
+		    {
+		        ps.setString(1, checkoutvehicle.license_plate);
+		        ps.setString(2, checkoutvehicle.parking_lot_id);
+		        try (ResultSet rs = ps.executeQuery()) {
+		            if (rs.next()) {
+		                parkingLotId = rs.getString("parking_lot_id");
+		                entryTime = rs.getTimestamp("entry_datetime");
+		                costPerMinute = rs.getDouble("cost_per_minute");
+		                
+		            } else {
+		                System.out.println("Vehicle not found or already checked out.");
+		                
+		                logger.info("NO_RECORD_FOUND");
+		                result.put("message", "no_record_found");
+		        	    result.put("status", "success");
+	
+		        	    return Response.status(Status.OK).entity(result).build();
+		               
+		            }
+		        }
+		        
+		        // CALCULATE COST PER MINUTE..
+		        long minutesParked = (System.currentTimeMillis() - entryTime.getTime()) / 60000;
+		        totalCost = minutesParked * costPerMinute;
+	
+		        //UPDATE RECORD..
+		        String updateVehicleSQL = "UPDATE parking_vehicle_lists SET exit_datetime = CURRENT_TIMESTAMP, total_cost = ? " +
+		                                  "WHERE license_plate = ?";
+		        
+		        try (PreparedStatement ps2 = conn.prepareStatement(updateVehicleSQL)) {
+		            ps2.setDouble(1, totalCost);
+		            ps2.setString(2, checkoutvehicle.license_plate);
+		            ps2.executeUpdate();
+		        }
+	
+		        //DECREMENT RECORD
+		        String updateLotSQL = "UPDATE parking_lots SET occupied_spaces = occupied_spaces - 1 " +
+		                              "WHERE lot_id = ? AND occupied_spaces > 0";
+		        try (PreparedStatement ps3 = conn.prepareStatement(updateLotSQL)) {
+		            ps3.setString(1, parkingLotId);
+		            ps3.executeUpdate();
+		            
+		            // Return created response
+		            result.put("total_cost", totalCost);
+		            result.put("status","success");
+		            result.put("message","successfully_updated");
+		        
+		            return Response.status(Status.OK).entity(result).build();
+		            
+		        }
+	     
+		    }
+		    catch (SQLException e) 
+	        {
+			    logger.error("Database error: " + e.getMessage());
+			    e.printStackTrace();
+			    
+			    result.put("status","failed");
+		        result.put("message","database_error");
+			    
+				return Response.status(Status.BAD_GATEWAY).entity(result).build();
+	        } 
+        }
+        
+
+      
+   
+	}
+	
+	
+	//GETTING OCCUPANCY & AVAILABILITY PARKING LOT 
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("get-parking-lot-details")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getparkinglotdetails(GetParkingDetailsModel getparkingdetails) throws SQLException {
+		
+		logger = LogManager.getLogger(APIService.class);
+			 
+	    logger.info("PARKING_LOT_ID:{}", getparkingdetails.lot_id);
+	   
+	    result = new JSONObject();
+	    
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+	    
+	    
+	    try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+                Statement st = conn.createStatement()) 
+        {
+        	
+        
+		    //Retrieve vehicle info
+		    String selectVehicleSQL = "SELECT capacity, occupied_spaces FROM parking_lots " +
+		                              "WHERE lot_id = ?";
+		    Integer capacity = 0;
+		    Integer occupied_spaces = 0;
+		    
+		    try (PreparedStatement ps = conn.prepareStatement(selectVehicleSQL)) 
+		    {
+		        ps.setString(1, getparkingdetails.lot_id);
+		     
+		        try (ResultSet rs = ps.executeQuery()) {
+		            if (rs.next()) 
+		            {
+		            	capacity = rs.getInt("capacity");
+		            	occupied_spaces = rs.getInt("occupied_spaces");
+		            	
+		                logger.info("RECORD_FOUND");
+		                result.put("capacity",capacity);
+		                result.put("occupied_spaces",occupied_spaces);
+		                result.put("message", "record_found");
+		        	    result.put("status", "success");
+	
+		        	    return Response.status(Status.OK).entity(result).build();
+		            	
+		            } else {
+		                
+		                
+		                logger.info("NO_RECORD_FOUND");
+		                result.put("message", "no_record_found");
+		        	    result.put("status", "success");
+	
+		        	    return Response.status(Status.OK).entity(result).build();
+		               
+		            }
+		        }
+		    }
+		    catch (SQLException e) 
+	         {
+			    logger.error("Database error: " + e.getMessage());
+			    e.printStackTrace();
+			    
+			    result.put("status","failed");
+		        result.put("message","database_error");
+			    
+				return Response.status(Status.BAD_GATEWAY).entity(result).build();
+			    
+			 } 
+        }	 
+	}
+	
+	/*
+	//GETTING OCCUPANCY & AVAILABILITY PARKING LOT 
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("get-all-vehicle-parked")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getAllVehicleParked(GetAllVehicleParkedModel getallvehicleparked) throws SQLException {
+		
+		logger = LogManager.getLogger(APIService.class);
+	
+		result_data = new ArrayList<JSONObject>();
+		
+		offset = ((getallvehicleparked.page_number * getallvehicleparked.data_counts)
+				- getallvehicleparked.data_counts);
+		
+		
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+	    
+	    Integer count = 0;
+	    try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+                Statement st = conn.createStatement()) 
+        {
+        	
+        
+	    	 String countVehicle = "SELECT count(*) AS `count` " +
+	                    "FROM parking_vehicle_lists " +
+	                    "WHERE exit_datetime IS NULL ";
+
+				try (PreparedStatement ps = conn.prepareStatement(countVehicle)) 
+				{
+					try (ResultSet rs = ps.executeQuery()) 
+					{
+						while (rs.next()) 
+						{
+							count = rs.getInt("count");
+						}
+					}
+					
+				}
+				
+				
+				
+		    //Retrieve vehicle info
+	        String selectVehicleSQL = "SELECT id, owner_name, type, license_plate, parking_lot_id, entry_datetime " +
+                    "FROM parking_vehicle_lists " +
+                    "WHERE exit_datetime IS NULL " +
+                    "ORDER BY entry_datetime DESC " +
+                    "LIMIT " + getallvehicleparked.data_counts +
+                    " OFFSET " + offset;
+
+			try (PreparedStatement ps = conn.prepareStatement(selectVehicleSQL)) 
+			{
+				try (ResultSet rs = ps.executeQuery()) 
+				{
+					while (rs.next()) 
+					{
+						data = new JSONObject();
+						int id = rs.getInt("id");
+						String ownerName = rs.getString("owner_name");
+						String type = rs.getString("type");
+						String licensePlate = rs.getString("license_plate");
+						int lotId = rs.getInt("parking_lot_id");
+						Timestamp entryTime = rs.getTimestamp("entry_datetime");
+			
+						// Example: print the values (or add them to a list/DTO)
+						System.out.println("ID: " + id +
+			                         ", Owner: " + ownerName +
+			                         ", Type: " + type +
+			                         ", Plate: " + licensePlate +
+			                         ", Lot: " + lotId +
+			                         ", Entry: " + entryTime);
+						
+						
+						//put it into object
+						data.put("id",id);
+						data.put("lot_id",lotId);
+						data.put("owner_name", ownerName);
+						data.put("type",type);
+						data.put("license_plate", licensePlate);
+						data.put("entry_time",entryTime);
+						
+						result_data.add(data);
+						
+				    }
+					
+					result.put("message", "record_found");
+					result.put("result", result_data);
+					result.put("status", "success");
+					result.put("count",count);
+				}
+			}
+		    
+        }
+  
+	}
+	*/
+	
+	@SuppressWarnings("unchecked")
+	@POST
+	@Path("get-all-vehicle-parked")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getAllVehicleParked(GetAllVehicleParkedModel getallvehicleparked) {
+
+	    logger = LogManager.getLogger(APIService.class);
+
+	    result = new JSONObject();
+	    result_data = new ArrayList<>();
+	     offset = ((getallvehicleparked.page_number * getallvehicleparked.data_counts)
+	                  - getallvehicleparked.data_counts);
+
+	    Config config = new Config();
+	    String db_url = config.getString("db.url");
+	    String db_user = config.getString("db.user");
+	    String db_pass = config.getString("db.pass");
+
+	    Integer count = 0;
+
+	    try (Connection conn = DriverManager.getConnection(db_url, db_user, db_pass);
+	         Statement st = conn.createStatement()) {
+
+	        // Count total records
+	        String countVehicle = "SELECT COUNT(*) AS count " +
+	                              "FROM parking_vehicle_lists " +
+	                              "WHERE exit_datetime IS NULL";
+
+	        try (PreparedStatement ps = conn.prepareStatement(countVehicle);
+	             ResultSet rs = ps.executeQuery()) {
+	            if (rs.next()) {
+	                count = rs.getInt("count");
+	            }
+	            else
+	            {
+	            	result.put("status", "success");
+		            result.put("message", "no_record_found");
+		            result.put("count", 0);
+		         
+	            }
+	        }
+
+	        // Retrieve vehicle info
+	        String selectVehicle = "SELECT id, owner_name, type, license_plate, parking_lot_id, entry_datetime " +
+	                                  "FROM parking_vehicle_lists " +
+	                                  "WHERE exit_datetime IS NULL " +
+	                                  "ORDER BY entry_datetime DESC " +
+	                                  "LIMIT ? OFFSET ?";
+
+	        try (PreparedStatement ps = conn.prepareStatement(selectVehicle)) {
+	            ps.setInt(1, getallvehicleparked.data_counts);
+	            ps.setInt(2, offset);
+
+	            try (ResultSet rs = ps.executeQuery()) 
+	            {
+	                while (rs.next()) 
+	                {
+	                    data = new JSONObject();
+	                    data.put("id", rs.getInt("id"));
+	                    data.put("lot_id", rs.getString("parking_lot_id"));
+	                    data.put("owner_name", rs.getString("owner_name"));
+	                    data.put("type", rs.getString("type"));
+	                    data.put("license_plate", rs.getString("license_plate"));
+	                    data.put("entry_time", rs.getTimestamp("entry_datetime"));
+
+	                    result_data.add(data);
+	                }
+	            }
+	        }
+
+	       
+	        if (!result_data.isEmpty()) 
+	        {
+	            result.put("status", "success");
+	            result.put("message", "record_found");
+	            result.put("count", count);
+	            result.put("result", result_data);
+	        } 
+	        else
+	        {
+	            result.put("status", "success");
+	            result.put("message", "no_record_found");
+	            result.put("count", 0);
+	            result.put("result", new ArrayList<>());
+	        }
+
+	 	    return Response.status(Status.OK).entity(result).build();
+
+	    } catch (SQLException e) {
+	        logger.error("Database error: ", e);
+
+	        result.put("status", "error");
+	        result.put("message", "database_error");
+	        result.put("error", e.getMessage());
+
+	        return Response.status(Response.Status.INTERNAL_SERVER_ERROR).entity(result).build();
+	    }
+	}
+	
+	public void decrementOccupiedSpaces(Connection conn, String parkingLotId) throws SQLException {
+	    String sql = "UPDATE parking_lot SET occupied_spaces = occupied_spaces - 1 " +
+	                 "WHERE id = ? AND occupied_spaces > 0";
+
+	    try (PreparedStatement ps = conn.prepareStatement(sql)) {
+	        ps.setString(1, parkingLotId);
+	        int rowsUpdated = ps.executeUpdate();
+
+	        if (rowsUpdated > 0) {
+	            System.out.println("Occupied spaces decremented for lot: " + parkingLotId);
+	        } else {
+	            System.out.println("No update performed. Lot may already be empty or invalid ID.");
+	        }
+	    }
+	}
+	    
+    public static boolean checkPlate(String input) {
+        return input != null && input.matches(LICENSE_PLATE_REGEX);
+    }
+    
+    private static boolean isValidName(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        return NAME_PATTERN.matcher(name).matches();
+    }
+    
+	
+	
+}

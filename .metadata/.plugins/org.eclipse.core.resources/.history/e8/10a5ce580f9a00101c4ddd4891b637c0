@@ -1,0 +1,29 @@
+package Data;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class GetAllVehicleParkedModel {
+
+	//USE FOR PAGINATION 
+	public Integer data_counts;
+	public Integer page_number;
+	
+	@JsonProperty("data_counts")
+	public Integer getData_counts() {
+		return data_counts;
+	}
+	public void setData_counts(Integer data_counts) {
+		this.data_counts = data_counts;
+	}
+	
+	@JsonProperty("page_number")
+	public Integer getPage_number() {
+		return page_number;
+	}
+	public void setPage_number(Integer page_number) {
+		this.page_number = page_number;
+	}
+	
+	
+	
+}

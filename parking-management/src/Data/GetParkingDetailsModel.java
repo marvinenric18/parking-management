@@ -1,0 +1,19 @@
+package Data;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class GetParkingDetailsModel {
+
+	public String lot_id;
+
+	@JsonProperty("lot_id")
+	public String getLot_id() {
+		return lot_id;
+	}
+
+	public void setLot_id(String lot_id) {
+		this.lot_id = lot_id;
+	}
+	
+	
+}
